@@ -1,0 +1,338 @@
+---
+output: pdf_document
+---
+**Introduction** 
+
+"La Quinta is Spanish for 'Next to Dennys'". Though this observation is clearly a joke by the late comedian Mitch Hedberg, we wanted to verify this claim through a combination of web scraping and statistical analysis. The following write-up details our web scraping and analytical approach in comparing the distances between La Quinta Inns and Dennys in the United States.
+
+**La Quinta**
+
+We split up our La Quinta web scraping into two different R scripts, one to grab the the full html file and save each individual La Quinta webpage as its own HTML file and save it locally, and the other to parse through the files and create a Data Frame of specific attributes
+
+*get_lq*
+
+This script followed a series of steps:
+
+1. Load lq_states.csv to determine which US States to search through
+2. Read full html file from this [location web page](http://www.lq.com/en/findandbook/hotel-listings.html)
+3. Create data/lq/ directory to hold individual La Quinta Inn HTMl Files
+4. Find the nodes in the full html file which correspond to each state
+5. Loop through nodes to extract URLs
+6. Save HTML file for each URL in pre-specified directory
+7. Repeat steps 4-6 for each state in lq_states.csv
+
+*parse_lq*
+
+The parsing script follows a series of steps:
+
+1. Load file names saved in local directory from get_lq script
+2. Load in first HTML file 
+3. Extract address, location, name, and room size nodes from HTML file
+4. Repeat steps 2-3 for each HTML file from local directory
+5. Parse through address node to extract the full address, state, fax number, and phone number
+6. Parse through location node to extract Latitude and Longitude
+7. Parse through room node to extract the room size
+8. Construct the Data Frame with unique pieces taken above from 5-7
+9. Save Data Frame in "data/lq.Rdata" local directory
+
+**Dennys**
+
+Like above, we split up our La Quinta web scraping into two different R scripts, one to grab the HTML files using the where2getit API and save information to a local XML file, and the other to parse through the saved files and create a Data Frame with for each Dennys.
+
+*get_dennys*
+
+This script follows a series of steps:
+
+1. Create R Function that performs the following:
+  + Concatenates where2getit URL based on specific input values
+  + Downloads URL HTML to a file stored on a local directory
+  + Latitude, Longitude, and Radius are taken from dennys_coords.csv
+  + Key is Hard Coded in the script
+  + Regardless of Radius, the where2getit API will stop at 1000 Denny's, so we hard coded the limit to be 1000
+2. Read in Location file, dennys_coords.csv, which contains latitude, longitude, and radius for 5 locations across the United States
+  + Durham, NC
+  + Little Rock, AK
+  + Santa Barbara, CA
+  + Honolulu, HI
+  + Denali National Park, AK
+  + The idea is to choose 5 locations across which a 1000 mile radius would encompass the entirety of the United States
+3. Create data/dennys/ directory to hold local files
+4. For each location above, call function and save HTML file to local directory
+
+*parse_dennys*
+
+This script follows a series of steps:
+
+1. Download file names saved in local directory from get_dennys script
+2. Loop across all HTML Files
+3. Read HTML data for each file and extract the following information:
++ Latitude
++ Longitude
++ City
++ State
++ Zip
++ Country
+4. Create 1 Data Frame which contains all values above across all 5 files
+5. Remove rows corresponding to Denny's in Canada and Mexico (not in the US)
+6. Remove duplicate rows
+
+*Makefile*
+
+Our Makefile has the following dependencies:
+
+1. get_lq.R $\rightarrow$ parse_lq.R $\rightarrow$ /data/lq.Rdata
+
+2. get_dennys.R $\rightarrow$ parse_dennys.R $\rightarrow$ /data/dennys.Rdata
+
+3. /data/lq.Rdata & /data/dennys/Rdata $\rightarrow$ hw2.Rmd
+
+**Distance Analysis**
+
+For the first part of our Distance Analysis, we calculated fours pieces of information for *each* La Quinta:
+
+1. The number of Denny's within 5 Kilometers
+2. Average of all the distances between the La Quinta and each Denny's within 5 km
+3. An indicator variable which has value 1 if there is a Denny's within 5km and a 0 otherwise
+4. The distance of each La Quinta to the nearest Denny's 
+
+We have three main pieces of analysis: 
+
+1. The number of La Quinta Hotels that have a Denny's within 5km distance
+* We choose 5km as the cutoff point because it is roughly 10 minutes of driving distance
+2. The average distance between each La Quinta to all the Denny's within 5km
+3. The distance from each La Quinta to the nearest Denny's 
+
+```{r, echo = F}
+suppressMessages(suppressWarnings(require(scales)))
+
+load("~/Desktop/Team2_hw2/data/dennys.Rdata")
+load("~/Desktop/Team2_hw2/data/lq.Rdata")
+
+par(mfrow = c(1,1))
+
+#Source: http://www.r-bloggers.com/r-functions-for-earth-geographic-coordinate-calculations/#
+#Returns the earth distance between two points given their latitudes and longitudes#
+earth.dist <- function (long1, lat1, long2, lat2) 
+{
+  rad <- pi/180
+  a1 <- lat1 * rad
+  a2 <- long1 * rad
+  b1 <- lat2 * rad
+  b2 <- long2 * rad
+  dlon <- b2 - a2
+  dlat <- b1 - a1
+  a <- (sin(dlat/2))^2 + cos(a1) * cos(b1) * (sin(dlon/2))^2
+  c <- 2 * atan2(sqrt(a), sqrt(1 - a))
+  R <- 6378.145
+  d <- R * c
+  return(d)
+}
+
+dennys <- true.loc.df[,c(1,2,4)]
+lq <- dd
+lq$dennys <- NA #Create a new column called dennys which stores the number of denny's within 5km#
+lq$dist <- NA #Createa a new column called dist which stores the average distance of all the denny's
+              #within 5km distance.#
+lq$min_dist <- NA #Create a new column called min_dist which stores the distance to the closest denny's#
+
+lq[,6] <- as.numeric(as.character(lq[,6])) #Convert from factor to numerical values#
+lq[,7] <- as.numeric(as.character(lq[,7])) #Convert from factor to numerical values#
+lq$state <- as.character(lq$state) #Convert from factor to charcater#
+dennys$State <- as.character(dennys$State) #Convert from factor to charcater#
+for (i in 1:dim(lq)[1]){
+  lat1 <- lq[i,"lat"] #Extract the latitude of the lq hotel#
+  long1 <- lq[i,"long"] #Extract the longitude of the lq hotel#
+  state <- lq[i,"state"]  ##Extract the state of the lq hotel#
+  counter = 0 #Set up a counter#
+  tot_dist = 0 #Initialize the total distance#
+  cands <- subset(dennys, State == state) #Find all the denny's in the same state#
+  if (length(cands) == 0){
+    lq[i, "dist"] <- 0
+    lq[i, "dennys"] <- 0
+    lq[i, "min_dist"] <- NA
+    next; 
+  }
+  #For every denny's in the same state, we find the denny's within 5km distance#
+  min_dist <- earth.dist(long1,lat1,cands[1,2],cands[1,1]) 
+  #Set the min_dist to the distance from the lq hotel to the first candidate denny's#
+  for (j in 1:dim(cands)[1]){
+    #Calculate the earth distance of the denny's to the lq hotel#
+    dist <- earth.dist(long1,lat1,cands[j,2],cands[j,1])
+    #If the distance is smaller than 5km, increment the counter by 1#
+    counter = counter + (dist < 5) 
+    #If the distance if smaller than 5km, add the distance to the total distance#
+    tot_dist = tot_dist + dist * (dist < 5) 
+    if (dist < min_dist){
+      min_dist <- dist #if the distance is smaller than the current min_dist, update the min_dist#
+    } 
+  }
+  lq[i,"min_dist"] <- min_dist #Add min_Dist to the min_dist column#
+  if (! is.numeric(counter)){ 
+    lq[i,"dennys"] <- NA #Check for special case#
+  } else {
+    lq[i,"dennys"] <- counter  #Add counter to the dennys column#
+    # if we have at least denny's within 5km, we calculate the average distance of all these denny's.#
+    # Else, we set dist to 0.#
+    if (counter > 0){
+      lq[i,"dist"] <- tot_dist/counter 
+    } else{
+      lq[i, "dist"] <- 0
+    }
+  }
+}
+
+
+lq$exists <- c(1) #Create a new column called exists#
+lq[which(lq$dist == 0),"exists"] <- 0 #If there is at least one denny's within 5km, then set exists to 1, 
+#otherwise set it to 0.#
+
+hist(lq$dist, 
+     xlab = "Average Distance to La Quintas within 5km", 
+     main = "Histogram of Average Distance within 5km", 
+     breaks = 20) #Create a histogram#
+laQuintPercentage <- length(which(lq$exists == 0)) / dim(lq)[1] 
+#Calculate the percentage of La Quintas that do not have a Denny's within 5km of distance#
+
+#A table showing the number of La Quintas that has Denny's within 5km by state#
+myTable <- table(as.factor(lq$state),lq$exists) 
+ #The proportion of the La Quinta that has Denny's within 5km by state#
+prop <- prop.table(myTable,1)
+
+#Print proportion table#
+#print(round(100*prop[,2],1))
+```
+
+```{r, echo = F}
+#summary(lq$min_dist) #Summary of min_dist#
+#Create a histogram of the distance from each La Quinta to the nearest Denny's#
+hist(lq$min_dist, 
+     breaks = seq(0,max(lq$min_dist)+10,5), 
+     xlab = "Distance to the Nearest Denny's", 
+     main = "Histogram of the Distance to the Nearest Denny's") 
+```
+
+```{r, echo = F}
+#Boxplot of the distance to the nearest Denny's by state#
+boxplot(lq$min_dist~as.factor(lq$state), las = 2) 
+
+
+#Find How many La Quinta Hotels are in California#
+lqNodesInCali <- which(lq[,"state"] == "CA")
+numLqInCali <- length(which(lq[,"state"] == "CA"))
+
+#Find the percetnage of La Quinta Hotels in CA that are close to a Dennys#
+percentageLqInCaliNearDennys <- length(which(lq[lqNodesInCali,]$exists == 1))/numLqInCali
+```
+
+Above, you can see 3 plots and a table:
+
+1. A histogram of the average distance from each La Quinta to the Denny's within 5km.
+
+* It is clear that the majority of the Denny's that are within the 5km radius lie within 1km of La Quinta. Specifically, `r round((1- laQuintPercentage*100),4)`%
+* In that sense, we can say that if a Denny's is close to a La Quinta hotel, it is really close, whether by purpose or by accident. 
+
+2. A table of state versus the number of La Quintas that has a Denny's within 5km. 
+
+* We find that `r which.max(myTable[,"1"])` has the largest number of La Quintas that has a Denny's within 5km, which is `r myTable[which.max(myTable[,"1"])]`
+* Since each state has different number of La Quintas to start with, we also created a table of states with the proportion of La Quintas that has a Denny's within 5km. 
+
+3. A histogram of the distances between La Quinta and Denny's. 
+
+* Again, half of the La Quintas have a Denny's within 5km since the median is 5.07km. 
+* Since the 3rd quantile is 21.73km and the maximum is 327.90km, 1/4 of all the La Quintas are actually very far (about 1h's driving distance) from the nearest Denny's. 
+* To better visualize this, We plotted a histogram of the distance. This histogram has a long head as we've shown above, but it also has a relatively long tail. 
+
+*Conclusions of Distance Analysis*
+
+We suspect that the distance from each La Quinta to the nearest Denny's is geographical, so we created a boxplot of distance against state. We can see that there are huge discrepancies across states. The distances for states like California and Florida have very small medium values with small spread while those for states like Louisiana and Michigan have relatively large medium values with large spread. From this, we hypothesize that the distance from La Quinta to the nearest Denny's may be related to **population density**. 
+
+By population density, we are referring to the number of people living within a certain unit. For example, we could use a unit of 1 mile, which would mean that the density is referring to the number of people living in a 1 mile radius. This number would obviously be much higher in cities and larger states than others. In this specific case, we are referring to population density within a smaller radius, such as a city or county.
+
+In states with higher population density, La Quinta and Denny's are likely to occur together in population centers whereas in states with low population density and large land area, there are many more location options for both La Quinta and Denny's and the chance of their coinciding with each other is therefore small. 
+
+Texas is an interesting case in that it has a fairly small medium value, but an enormously large amount of outliers on the right side. It may be caused by the fact that Texas has a huge amount of rural area which gives more location options of locations for both La Quinta and Denny's. The visualizations which we will do later confirms this: Denny's and La Quinta coincide a lot at the three cosmopolitan areas - Dallas, San Antonio and Houston, but in the other parts of Texas, there seems to be a large amount of La Quintas, but very few Denny's. 
+
+
+**Visualizations**
+
+For the second part of our distance analysis, we created 3 different visualizations, taking into account different amenities within the La Quinta Inns. All plots are drawn on a map of the Continental United States.
+
+*Visualization 1*
+
+This visualization plots all La Quinta and Denny's locations, splitting up the hotels into three different sizes:
+
+* Small: <= 50 Rooms
+* Middle: > 50 and <= 100 Rooms
+* Large: > 100 Rooms
+
+*Visualization 2*
+
+Focusing on La Quinta, we set a different color to each hotel size and plotted the distibution of the different sizes of the hotels.
+
+*Visualization 3*
+
+This visualization plots all La Quinta's that are within 5 Km of a Denny's (Blue), and those that are farther away (Red)
+
+```{r, echo = F}
+suppressMessages(suppressWarnings(require(ggmap)))
+suppressMessages(suppressWarnings(require(ggplot2)))
+suppressMessages(suppressWarnings(require(magrittr)))
+
+lq[,8] <- apply(lq,1,function(x) as.numeric(x["room"])/100) #Normalize the room size#
+lq[,6] <- as.numeric(as.character(lq[,6])) #Convert from factors to numerical values#
+lq[,7] <- as.numeric(as.character(lq[,7])) #Convert from factors to numerical values#
+lq[,8] <- as.numeric(as.character(lq[,8])) #Convert from factors to numerical values#
+lq$exists <- as.factor(lq$exists) #Change "exists" column to a factor 
+data <- lq[,c(6:8,12)] #Extract the latitudes, longitudes and the number of rooms#
+colnames(data) <- c("Latitude","Longitude","Rooms","exists")
+
+dennys <- true.loc.df[,1:2]
+
+suppressMessages(map <- get_map(location = 'United States', zoom = 4)) #Get the lat and lon of the United States#
+ggmap(map) + geom_point(data = data, 
+                        aes(x = Longitude, y = Latitude),
+                        shape = 16, 
+                        colour ="red" ) + geom_point(data = dennys, 
+             aes(x = Longitude,y = Latitude), 
+             colour = "blue",
+             shape = 18) +annotate("text", x = -80, y = 55, label = "Red: La Quinta") +annotate("text",x=-80,y=53,label="Blue: Dennys")
+```
+
+```{r, echo = F}
+#Distribution of small, mid-sized and large LQs#
+dd$room <- as.numeric(dd$room) #Convert from factor to numerical values#
+hist(dd$room, xlab = "Number of Rooms", main = "Histogram of the Number of Rooms") #Plot Histogram#
+room_factor <- factor(dd$room, levels = c("small","mid", "large")) #Create a new column of factors#
+data$room_factor <- room_factor #Append the new column to data#
+
+#If the number of rooms is smaller than 50, label it small#
+data[which(data$Rooms <= 50/100),"room_factor"] <- c("small")
+#If the number of rooms is between 50 and 100, label it mid#
+data[which(data$Rooms <= 100/100 & data$Rooms > 50/100),"room_factor"] <- c("mid") 
+#If the number of rooms is between 100 and 150, label it mid#
+data[which(data$Rooms > 100/100 ),"room_factor"] <- c("large") 
+```
+
+```{r, echo = F}
+ggmap(map) + geom_point(data = data, 
+                        aes(x = Longitude, y = Latitude,colour = room_factor),
+                        shape = 1) + scale_color_manual(values = c("green","red","blue"))
+```
+
+```{r, echo = F}
+#Visualizate the distance from La Quintas to Denny's#
+ggmap(map) + geom_point(data = data, 
+                        aes(x = Longitude, y = Latitude, color = exists) ,
+                        shape = 1)  + scale_color_manual(values = c("red", "blue"))
+```
+
+**Overall Conclusions**
+
+We can derive a few more conclusions from our analysis above:
+
+1. Roughly 1/2 of all La Quinta's in the United States are within 5 Km of a Denny's
+2. From Visualization 3, we can see that most La Quinta's that are close to Denny's are located in California, Eastern Texas, Florida Atlantic Coast, and the North East
+* Zooming in on California, `r round(percentageLqInCaliNearDennys*100,4)`% of La Quinta's in California are within 5 Km of a Dennys
+* This could have to do with the fact that California is very large, and there would be a lot of La Quinta's and Dennys located there anyway, which would increase the chances of the two being close together
+3. There are a lot of large La Quinta Hotels (> 100 Beds) In the North-East, Florida, Texas, and California
+4. The distance from La Quinta to the nearest Denny's is geographical. Our hypothesis that the distance is smaller in states with higher population density. 
